@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Javascript Loan Calculator</title>
+    </head>
+    <style>/* This is a css style sheet: It adds style to the program output */
+        .output { font-weight: bold; }
+        #payment { text-decoration: underline; }
+        #graph { border: solid black 1px; }
+        th, td { vertical-align: top}
+    </style>
+    <body>
+        <table>
+            <tr>
+                <th>Enter Loan Data:</th>
+                <td></td>
+                <th>Loan Balance, Cumulative Equity and Interest Payments</th>
+            </tr>
+            <tr>
+                <td>Amount of loan:(<label>&#8377;</label>)</td>
+                <td><input id="amount" onchange="calculate()"></td>
+                <td rowspan="8"><canvas id="graph" width="400" height="250"></canvas></td>
+            </tr>
+            <tr>
+                <td>Annual Interest (%):</td>
+                <td><input id="apr" onchange="calculate()"></td>
+            </tr>
+            <tr>
+                <td>Repayment period (years):</td>
+                <td><input id="years" onchange="calculate()"></td>
+            </tr>
+            <tr>
+                <td>Zipcode (to find lenders):</td>
+                <td><input id="zipcode" onchange="calculate()"></td>
+            </tr>
+            <tr>
+                <th>Approximate Payments</th>
+                <td><button onclick="calculate()">Calculate</button></td>
+            </tr>
+            <tr>
+                <td>Monthly Payment:</td>
+                <td>&#8377; <span class="output" id="payment"></span></td>
+            </tr>
+            <tr>
+                <td>Total Payment:</td>
+                <td>&#8377; <span class="output" id="total"></span></td>
+            </tr>
+            <tr>
+                <td>Total Interest:</td>
+                <td>&#8377; <span class="output" id="totalinterest"></span></td>
+            </tr>
+            <tr>
+                <th>Sponsors:</th>
+                <td colspan=2>Apply your loan with one of these fine lenders
+                    <div id="lenders"></div>
+                </td>
+            </tr>
+        </table>
+        <script>
+            "use strict";
+            
+            /*
+             * This script defines the calculate function used by the handlers defined in above HTML
+             */
+            
+            function calculate() {
+                // lookup the input and output elements in the documents
+                var amount = document.getElementById('amount');
+                var apr = document.getElementById('apr');
+                var years = document.getElementById('years');
+                var zipcode = document.getElementById('zipcode');
+                var payment = document.getElementById('payment');
+                var total = document.getElementById('total');
+                var totalinterest = document.getElementById('totalinterest');
+                
+                // Get user's input from the input elements. Assume it is all valid.
+                // convert interest from percentage to decimal and convert from 
+                // an annual rate to a monthly rate. Convert payment period in 
+                // years to the number of monthly payments
+                var principal = parseFloat(amount.value);
+                var interest = parseFloat(apr.value) / 100 / 12;
+                var payments = parseFloat(years.value) * 12;
+                
+                // Now compute the monthly payment figure
+                var x = Math.pow(1 + interest, payments); // Math.pow computes power
+                var monthly = (principal * x * interest) / (x-1);
+                
+                // If the reult is a finite number, the user's input was good and 
+                // we have meaningful result to display
+                if(isFinite(monthly)) {
+                    payment.innerHTML = monthly.toFixed(2);
+                    total.innerHTML = (monthly * payments).toFixed(2);
+                    totalinterest.innerHTML = ((monthly * payments) - principal).toFixed(2);
+                    
+                    // save the user's input so that we can restore it the next time they visit 
+                    save(amount.value, apr.value, years.value, zipcode.value);
+                    
+                    // Advertise: find and display local lenders, but ignore network errors
+                    try {
+                        // catch any errors that occur between curly braces
+                        getLenders(amount.value, amount.value, years.value, zipcode.value);
+                    } catch(e) { /* and ignore those errors */ }
+                    
+                    // Finally, chart loan balance and interest and equity payments
+                    chart(principal, interest, monthly, payments);
+                } else {
+                    payment.innerHTML = "";
+                    total.innerHTML = "";
+                    totalinterest.innerHTML = "";
+                    chart(); // With no argument, clears the chart
+                }
+            }
+            
+            // Save the user's input
+            function save(amount, years, apr, zipcode) {
+                localStorage.loan_amount = amount;
+                localStorage.loan_apr = apr;
+                localStorage.loan_years = years;
+                localStorage.loan_zipcode = zipcode;
+            }
+            
+            // Automatically attempt to restore input fields when the document first loads.
+            window.onload = function() {
+                if(window.localStorage && localStorage.loan_amount) {
+                    document.getElementById('amount').value = localStorage.loan_amount;
+                    document.getElementById('apr').value = localStorage.loan_apr;
+                    document.getElementById('years').value = localStorage.loan_years;
+                    document.getElementById('zipcode').value = localStorage.loan_zipcode;
+                }
+            };
+            
+            // Get local lenders based on zipcode
+            function getLenders(amount, apr, years, zipcode) {
+                // If browser does not support XMLHttpRequest object, do nothing
+                if(!window.XMLHttpRequest) return;
+                
+                var ad = document.getElementById('lenders');
+                if(!ad) return;         // Quit if no spot for output
+                
+                // Encode user's input as query parameters in the URL
+                var url = "getLenders.php" +
+                    "?amt=" + encodeURIComponent(amount) +
+                    "&apr" + encodeURIComponent(apr) +
+                    "&yrs" + encodeURIComponent(years) +
+                    "&zip" + encodeURIComponent(zipcode);
+                
+                // fetch the content of the url using XMLHttpRequest
+                var req = XMLHttpRequest();
+                req.open('GET', url);
+                req.send(null);
+                
+                // Before returning, register an event handler function that will be called at some later 
+                // time when the HTTP server's response arrives. This kind of asynchronous programming is 
+                // very common in JavaScript.
+                
+                req.onreadystatechange = function(){
+                    if(req.readyState == 4 && req.status == 200) {
+                        var response = req.responseText;
+                        lenders = JSON.parse(response);
+                        var list = "";
+                        for(var i=0; i<lenders.length; i++) {
+                            list += "<li><a href='" + lenders[i].url + "'>" + lenders[i].name + "</a>";
+                        }
+                        ad.innerHTML = "<ul>" + list + "</ul>";
+                    }
+                };
+            }
+            
+            // Chart monthly loan balance, interest and equity in an HTML <canvas> element.
+            function chart(principal, interest, monthly, payments) {
+                var graph = document.getElementById("graph");
+                graph.width = graph.width;  // Magic to clear and reset the canvas elemnt
+                
+                // if we are called with no arguments or if this browser does not support 
+                // graphics in <canvas> element, then just return now
+                if(arguments.length == 0 || !graph.getContext) return;
+                
+                // Get the "context" object for the <canvas> that defines the drawing API
+                var g = graph.getContext("2d");
+                var width = graph.width, height = graph.height; // get canvas size
+                
+                // These functions convert payment numbers and ruppe amounts to pixels
+                function paymentToX(n) { return n * width/payments; }
+                function amountToY(a) { return height-(a * height/(monthly*payments*1.05)); }
+                
+                // Payments are a straight line from (0,0) to (payments, monthly*payments)
+                g.moveTo(paymentToX(0), amountToY(0));  // start to lower left
+                g.lineTo(paymentToX(payments), amountToY(monthly*payments));    // Draw to upper right
+                g.lineTo(paymentToX(payments), amountToY(0));   // Down to lower right
+                g.closePath();  // and back to start
+                g.fillStyle = "#f88";   // light red
+                g.fill();   // Fill the triangle
+                g.font = "bold 12px sans-serif";    // Define the font
+                g.fillText("Total interest Payments", 20, 20);  // Draw text in legend
+                
+                // Cumulative equity is non-linear and trickier to chart
+                var equity = 0;
+                g.beginPath();  // begin a new shape
+                g.moveTo(paymentToX(0), amountToY(0));  // starting at lower left
+                for(var p=1; p<=payments; p++) {
+                    // For each payment, figure out how much is interest
+                    var thisMonthsInterest = (principal - equity) * interest;
+                    equity += (monthly - thisMonthsInterest);   // the rest goes to equity
+                    g.lineTo(paymentToX(p), amountToY(equity)); // Line to this point
+                }
+                g.lineTo(paymentToX(payments), amountToY(0));   // Line back to X axis
+                g.closePath();  // and back to starting point
+                g.fillStyle = "green";  // Now use green paint
+                g.fill();   // and fill area under curve
+                g.fillText("Total Equity", 20, 35); // label it in green
+                
+                // Loop again as above but chart the loan balance as thick black line
+                var bal = principal;
+                g.moveTo(paymentToX(0), amountToY(bal));    // move to full principal
+                for(var p=1; p<=payments; p++) {
+                    var thisMonthsInterest = bal*interest;
+                    bal -= (monthly - thisMonthsInterest);  // the rest goes to equity
+                    g.lineTo(paymentToX(p), amountToY(bal));    // Draw line to this point
+                }
+                g.lineWidth = 3;    // use a thick line
+                g.stroke();     // Draw the balance curve
+                g.fillStyle = "black";  // switch to black text
+                g.fillText("Loan Balance", 20, 50); // legend entry
+                
+                // now make yearly tick mark and year numbers on x axis
+                g.textAlign = "center"; // center texts over ticks
+                var y = amountToY(0);   // Y coordinate of X axis
+                for (var year=1; year*12<payments; year++) {
+                    var x = paymentToX(year*12);    // Compute tick position
+                    g.fillRect(x-0.5, y-3, 1, 3);   // Draw the tick
+                    if(year == 1) g.fillText("Year", x, y-5);   // label the axis
+                    if(year % 2 == 0 && year*12 !== payments) {
+                        g.fillText(String(year), x, y-5);
+                    }
+                }
+                
+                // Mark payment amount along the line edge
+                g.textAlign = "right";  // right justify text
+                g.textBaseline = "middle";  // Center it vertically
+                var ticks = [monthly*payments, principal];  // The two points we will mark
+                var rightEdge = paymentToX(payments);   // X coordinate of Y axis
+                for(var i=0; i<ticks.length; i++) {
+                    var y = amountToY(ticks[i]);
+                    g.fillRect(rightEdge-3, y-0.5, 3, 1);
+                    g.fillText(String(ticks[i].toFixed(0)), rightEdge-5, y);
+                }
+            }
+        </script>
+    </body>
+</html>
